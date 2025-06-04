@@ -62,3 +62,4 @@ def import_email_templates():
             print(f"Error importing email template {email_template['name']}: {e}")
             continue
     print("Email Templates Imported")
+ 
