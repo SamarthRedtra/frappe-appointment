@@ -14,6 +14,7 @@ import React, {
  */
 import { Profile } from "@/pages/appointment/components/socialProfiles";
 import NetworkDisconnect from "@/components/network-disconnect";
+import { ThemeProvider } from "@/components/theme-provider";
 
 // Define the types for the userInfo and MeetingProviderTypes
 type MeetingProviderTypes = "Google Meet" | "Zoom";
@@ -41,14 +42,14 @@ export interface slotType {
 
 interface AppContextType {
   meetingId: string;
-  duration: string;
+  duration: number;
   userInfo: UserInfo;
   selectedDate: Date;
   selectedSlot: slotType;
   timeZone: string;
   meetingDurationCards: durationCard[];
   setMeetingId: (id: string) => void;
-  setDuration: (duration: string) => void;
+  setDuration: (duration: number) => void;
   setUserInfo: (userInfo: UserInfo) => void;
   setSelectedDate: (date: Date) => void;
   setSelectedSlot: (slot: slotType) => void;
@@ -59,7 +60,7 @@ interface AppContextType {
 // Initial context values
 const initialAppContextType: AppContextType = {
   meetingId: "",
-  duration: "",
+  duration: 0,
   selectedDate: new Date(),
   selectedSlot: { end_time: "", start_time: "" },
   timeZone: "",
@@ -92,7 +93,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
   const [meetingId, setMeetingId] = useState<string>(
     initialAppContextType.meetingId
   );
-  const [duration, setDuration] = useState<string>(
+  const [duration, setDuration] = useState<number>(
     initialAppContextType.duration
   );
   const [userInfo, setUserInfo] = useState<UserInfo>(
@@ -151,7 +152,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({
         setMeetingDurationCards,
       }}
     >
-      {children}
+      <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
+        {children}
+      </ThemeProvider>
     </AppContext.Provider>
   );
 };

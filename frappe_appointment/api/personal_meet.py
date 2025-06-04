@@ -1,11 +1,9 @@
-import datetime
 import json
 import re
 
 import frappe
 import frappe.utils
 import pytz
-from frappe.twofactor import encrypt
 
 from frappe_appointment.frappe_appointment.doctype.appointment_group.appointment_group import _get_time_slots_for_day
 from frappe_appointment.helpers.overrides import add_response_code
@@ -65,7 +63,15 @@ def get_meeting_windows(slug):
 
 @frappe.whitelist(allow_guest=True)
 @add_response_code
-def get_time_slots(duration_id: str, date: str, user_timezone_offset: str):
+def get_time_slots(
+    duration_id: str, date: str = None, user_timezone_offset: str = None, start_date: str = None, end_date: str = None
+):
+    if not date and not (start_date and end_date):
+        return {"error": "Date is required"}, 400
+
+    if not user_timezone_offset:
+        return {"error": "User timezone offset is required"}, 400
+
     duration = frappe.get_doc("Appointment Slot Duration", duration_id)
 
     user_availability = frappe.get_all(
@@ -81,7 +87,46 @@ def get_time_slots(duration_id: str, date: str, user_timezone_offset: str):
 
     appointment_group = frappe.get_doc(appointment_group_obj)
 
-    data = _get_time_slots_for_day(appointment_group, date, user_timezone_offset)
+    if date:
+        data = _get_time_slots_for_day(appointment_group, date, user_timezone_offset)
+    else:
+        data = {
+            "all_available_slots_for_data": [],
+            "dates": [],
+            "duration": None,
+            "starttime": None,
+            "endtime": None,
+            "total_slots": 0,
+            "available_days": [],
+        }
+
+        date = start_date
+        cache_dict = {}
+        while True:
+            datetime = frappe.utils.get_datetime(date)
+            enddatetime = frappe.utils.get_datetime(end_date)
+            if datetime > enddatetime:
+                break
+            _data = _get_time_slots_for_day(
+                appointment_group, date, user_timezone_offset, time_slot_cache_dict=cache_dict
+            )
+            if _data["is_invalid_date"]:
+                date = _data["next_valid_date"]
+                if not isinstance(_data["next_valid_date"], str):
+                    date = _data["next_valid_date"].strftime("%Y-%m-%d")
+            else:
+                data["all_available_slots_for_data"].extend(_data["all_available_slots_for_data"])
+                data["dates"].append(_data["date"])
+                data["duration"] = _data["duration"]
+                data["starttime"] = (
+                    min(_data["starttime"], data["starttime"]) if data["starttime"] else _data["starttime"]
+                )
+                data["endtime"] = max(_data["endtime"], data["endtime"]) if data["endtime"] else _data["endtime"]
+                data["total_slots"] += _data["total_slots_for_day"]
+                for available_day in _data["available_days"]:
+                    if available_day not in data["available_days"]:
+                        data["available_days"].append(available_day)
+                date = frappe.utils.add_days(date, 1)
 
     if not data:
         return None
@@ -90,6 +135,7 @@ def get_time_slots(duration_id: str, date: str, user_timezone_offset: str):
         del data["appointment_group_id"]
     data["user"] = user_availability.get("name")
     data["label"] = duration.title
+    data["rescheduling_allowed"] = bool(duration.allow_rescheduling)
 
     return data
 
@@ -173,6 +219,7 @@ def book_time_slot(
     args["personal"] = True
     args["user_calendar"] = user_availability.name
     args["appointment_slot_duration"] = duration.name
+    args["user_slug"] = user_availability.slug
 
     success_message = ""
 
@@ -190,16 +237,7 @@ def book_time_slot(
         return_event_id=True,
         **args,
     )
-    event_token = encrypt(response["event_id"])
-    event = frappe.get_doc("Event", response["event_id"])
-    response["meeting_provider"] = event.custom_meeting_provider
-    response["meet_link"] = event.custom_meet_link
-    response["reschedule_url"] = frappe.utils.get_url(
-        "/schedule/in/{0}?type={1}&reschedule=1&event_token={2}".format(
-            user_availability.get("slug"), duration_id, event_token
-        )
-    )
-    response["google_calendar_event_url"] = event.custom_google_calendar_event_url
+
     return response
 
 
@@ -210,10 +248,8 @@ def create_dummy_appointment_group(duration, user_availability):
         "event_creator": user_availability.get("google_calendar"),
         "event_organizer": user_availability.get("user"),
         "members": [{"user": user_availability.get("name"), "is_mandatory": 1}],
-        "duration_for_event": datetime.timedelta(seconds=duration.duration),
-        "minimum_buffer_time": datetime.timedelta(seconds=duration.minimum_buffer_time)
-        if duration.minimum_buffer_time
-        else None,
+        "duration_for_event": duration.duration,
+        "minimum_buffer_time": duration.minimum_buffer_time if duration.minimum_buffer_time else None,
         "minimum_notice_before_event": duration.minimum_notice_before_event,
         "event_availability_window": duration.availability_window,
         "meet_provider": user_availability.get("meeting_provider"),
@@ -223,6 +259,8 @@ def create_dummy_appointment_group(duration, user_availability):
         "limit_booking_frequency": duration.limit_booking_frequency,
         "is_personal_meeting": 1,
         "duration_id": duration.name,
+        "allow_rescheduling": duration.allow_rescheduling,
+        "minimum_notice_for_reschedule": duration.minimum_notice_for_reschedule,
     }
 
     return appointment_group_obj

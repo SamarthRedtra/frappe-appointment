@@ -16,6 +16,8 @@
   "members",
   "section_break_3djy",
   "duration_for_event",
+  "allow_rescheduling",
+  "minimum_notice_for_reschedule",
   "column_break_xzbw",
   "minimum_buffer_time",
   "limits_for_event_section",
@@ -50,7 +52,9 @@
   },
   {
    "fieldname": "duration_for_event",
-   "fieldtype": "Time",
+   "fieldtype": "Duration",
+   "hide_days": 1,
+   "hide_seconds": 1,
    "in_list_view": 1,
    "label": "Duration For Event",
    "reqd": 1
@@ -92,7 +96,9 @@
   {
    "description": "Minimum buffer time between two events ",
    "fieldname": "minimum_buffer_time",
-   "fieldtype": "Time",
+   "fieldtype": "Duration",
+   "hide_days": 1,
+   "hide_seconds": 1,
    "label": "Minimum Buffer Time"
   },
   {
@@ -227,10 +233,24 @@
    "label": "Email Template",
    "mandatory_depends_on": "send_email_alerts",
    "options": "Email Template"
+  },
+  {
+   "default": "1",
+   "fieldname": "allow_rescheduling",
+   "fieldtype": "Check",
+   "label": "Allow Rescheduling"
+  },
+  {
+   "depends_on": "allow_rescheduling",
+   "description": "Minimum number of hours before the event within which rescheduling is not allowed.",
+   "fieldname": "minimum_notice_for_reschedule",
+   "fieldtype": "Int",
+   "label": "Minimum Notice for Reschedule",
+   "non_negative": 1
   }
  ],
  "links": [],
- "modified": "2025-03-03 17:32:17.565817",
+ "modified": "2025-04-23 11:11:22.130701",
  "modified_by": "Administrator",
  "module": "Frappe Appointment",
  "name": "Appointment Group",
@@ -249,6 +269,7 @@
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],

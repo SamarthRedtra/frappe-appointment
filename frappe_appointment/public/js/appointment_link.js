@@ -47,7 +47,7 @@ function generate_table(data) {
   data.forEach((event) => {
     reschedule_link = event.reschedule_url
       ? `<button class="btn btn-default btn-xs" onclick="window.copy_to_clipboard('${event.reschedule_url}')">Copy Reschedule Link</button>`
-      : "";
+      : `<button class="btn btn-default btn-xs disabled" onclick="frappe.show_alert({message: __('Rescheduling is not allowed for this event.'), indicator: 'orange'});">Copy Reschedule Link</button>`;
     html += `<tr>
             <td>${event.subject}</td>
             <td>${event.starts_on}</td>
@@ -215,7 +215,7 @@ $(document).on("form-refresh", function (event, frm) {
     frappe.ui.form.on(doctype, {
       refresh: function (frm) {
         if (doctype == "User Appointment Availability" && !frm.doc.__islocal) {
-          frm.add_custom_button(__("Copy Appointment Link"), () => {
+          frm.add_custom_button(__("Copy Personal Meeting Link"), () => {
             frm.trigger("copy_appointment_link");
           });
 

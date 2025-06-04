@@ -38,9 +38,13 @@ class AppointmentGroup(Document):
     def validate_zoom(self):
         if self.meet_provider == "Zoom":
             appointment_settings = frappe.get_single("Appointment Settings")
-            appointment_settings_link = frappe.utils.get_link_to_form("Appointment Settings", None, "Appointment Settings")
+            appointment_settings_link = frappe.utils.get_link_to_form(
+                "Appointment Settings", None, "Appointment Settings"
+            )
             if not appointment_settings.enable_zoom:
-                return frappe.throw(frappe._(f"Zoom is not enabled. Please enable it from {appointment_settings_link}."))
+                return frappe.throw(
+                    frappe._(f"Zoom is not enabled. Please enable it from {appointment_settings_link}.")
+                )
             if (
                 not appointment_settings.zoom_client_id
                 or not appointment_settings.get_password("zoom_client_secret")
@@ -64,7 +68,9 @@ class AppointmentGroup(Document):
             return frappe.throw(frappe._("Please add at least one mandatory member to the appointment group."))
 
 
-def _get_time_slots_for_day(appointment_group: object, date: str, user_timezone_offset: str) -> object:
+def _get_time_slots_for_day(
+    appointment_group: object, date: str, user_timezone_offset: str, time_slot_cache_dict: dict = None
+) -> object:
     try:
         datetime_today = get_datetime(date)
         datetime_tomorrow = add_days(datetime_today, 1)
@@ -74,13 +80,13 @@ def _get_time_slots_for_day(appointment_group: object, date: str, user_timezone_
 
         if int(user_timezone_offset) > 0:
             all_time_slots_global_object = {
-                "yesterday": get_time_slots_for_given_date(appointment_group, datetime_yesterday),
-                "today": get_time_slots_for_given_date(appointment_group, datetime_today),
+                "yesterday": get_time_slots_for_given_date(appointment_group, datetime_yesterday, time_slot_cache_dict),
+                "today": get_time_slots_for_given_date(appointment_group, datetime_today, time_slot_cache_dict),
             }
         else:
             all_time_slots_global_object = {
-                "today": get_time_slots_for_given_date(appointment_group, datetime_today),
-                "tomorrow": get_time_slots_for_given_date(appointment_group, datetime_tomorrow),
+                "today": get_time_slots_for_given_date(appointment_group, datetime_today, time_slot_cache_dict),
+                "tomorrow": get_time_slots_for_given_date(appointment_group, datetime_tomorrow, time_slot_cache_dict),
             }
 
         user_time_slots = get_user_time_slots(all_time_slots_global_object, date, user_timezone_offset)
@@ -101,6 +107,7 @@ def _get_time_slots_for_day(appointment_group: object, date: str, user_timezone_
             filtered_slots.append(slot)
 
         time_slots_today_object["all_available_slots_for_data"] = filtered_slots
+        time_slots_today_object["total_slots_for_day"] = len(filtered_slots)
 
         return time_slots_today_object
     except GoogleBadRequest as e:
@@ -152,7 +159,35 @@ def is_valid_time_slots(
     return False
 
 
-def get_time_slots_for_given_date(appointment_group: object, datetime: datetime):
+def hours_to_time_slot(start_time, user_timezone_offset, current_time=None) -> int:
+    """
+    Returns the number of hours between current time and the given start time.
+
+    Args:
+        start_time (str): Start time in the format "YYYY-MM-DD HH:MM:SS"
+        user_timezone_offset (str): User's timezone offset
+        current_time (str, optional): Current time in the format "YYYY-MM-DD HH:MM:SS". Defaults to None. If None, current time will be used.
+
+    Returns:
+        int: Number of hours between current time and the given start time
+    """
+    start_time = datetime.datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S%z")
+    current_time = utc_to_given_time_zone(current_time or datetime.datetime.now(), user_timezone_offset)
+
+    return int((start_time - current_time).total_seconds() / 3600)
+
+
+def get_time_slots_for_given_date(appointment_group: object, datetime: datetime, time_slot_cache_dict=None):
+    if time_slot_cache_dict is not None:
+        if datetime in time_slot_cache_dict:
+            return time_slot_cache_dict[datetime]
+    data = _get_time_slots_for_given_date(appointment_group, datetime)
+    if time_slot_cache_dict is not None:
+        time_slot_cache_dict[datetime] = data
+    return data
+
+
+def _get_time_slots_for_given_date(appointment_group: object, datetime: datetime):
     date = datetime.date()
     weekday = get_weekday(datetime)
 
@@ -491,29 +526,24 @@ def vaild_date(date: datetime, appointment_group: object) -> object:
 
 def update_cal_slots_with_events(all_slots: list, all_events: list) -> list:
     """
-        Function to take all Frappe events and all Google Calendar available time slots and create a new list where each slot has a boolean 'is_frappe_event' to show if the given event is a Frappe event or not.
+        Function to take all Frappe events and all Google Calendar available time slots and create a new list where each slot has updated `starts_on` and `ends_on` fields.
 
         Args:
     all_slots (list): List of all Google slots available
     all_events (list): List of all Frappe Events
 
         Returns:
-        List: List of all slots with the 'is_frappe_event' check
+        List: List of all slots with the updated `starts_on` and `ends_on` fields
     """
     update_slots = []
     for currernt_slot in all_slots:
         updated_slot = {}
-        updated_slot["is_frappe_event"] = False
         updated_slot["starts_on"] = convert_timezone_to_utc(
             currernt_slot["start"]["dateTime"], currernt_slot["start"]["timeZone"]
         )
         updated_slot["ends_on"] = convert_timezone_to_utc(
             currernt_slot["end"]["dateTime"], currernt_slot["end"]["timeZone"]
         )
-        for event in all_events:
-            if event["google_calendar_event_id"] == currernt_slot["id"]:
-                updated_slot["is_frappe_event"] = True
-                break
 
         update_slots.append(updated_slot)
 
@@ -543,7 +573,7 @@ def get_avaiable_time_slot_for_day(
     # Start time of event
     current_start_time = get_next_round_value(minimum_buffer_time, starttime, False)
 
-    minute, second = divmod(appointment_group.duration_for_event.seconds, 60)
+    minute, second = divmod(appointment_group.duration_for_event, 60)
     hour, minute = divmod(minute, 60)
 
     current_end_time = add_to_date(current_start_time, hours=hour, minutes=minute, seconds=second)
@@ -566,7 +596,7 @@ def get_avaiable_time_slot_for_day(
             minimum_buffer_time,
             current_end_time,
             currernt_slot_start_time,
-            currernt_slot["is_frappe_event"],
+            True,
         ):
             available_slots.append({"start_time": current_start_time, "end_time": current_end_time})
             current_start_time = get_next_round_value(minimum_buffer_time, current_end_time, False)
@@ -574,7 +604,7 @@ def get_avaiable_time_slot_for_day(
             current_start_time = get_next_round_value(
                 minimum_buffer_time,
                 currernt_slot_end_time,
-                currernt_slot["is_frappe_event"],
+                True,
             )
             index += 1
 
@@ -584,7 +614,7 @@ def get_avaiable_time_slot_for_day(
 
 
 def is_valid_buffer_time(
-    minimum_buffer_time: datetime,
+    minimum_buffer_time: int,
     end: datetime,
     next_start: datetime,
     is_add_buffer_in_event: bool = True,
@@ -603,11 +633,11 @@ def is_valid_buffer_time(
     if not minimum_buffer_time or not is_add_buffer_in_event:
         return True
 
-    return minimum_buffer_time.seconds <= (next_start - end).seconds
+    return minimum_buffer_time <= (next_start - end).seconds
 
 
 def get_next_round_value(
-    minimum_buffer_time: datetime,
+    minimum_buffer_time: int,
     current_end_time: datetime,
     is_add_buffer_in_event: bool = True,
 ):
@@ -624,7 +654,7 @@ def get_next_round_value(
     if not minimum_buffer_time or not is_add_buffer_in_event:
         return current_end_time
 
-    minute, second = divmod(minimum_buffer_time.seconds, 60)
+    minute, second = divmod(minimum_buffer_time, 60)
     hour, minute = divmod(minute, 60)
 
     min_start_time = add_to_date(current_end_time, hours=hour, minutes=minute, seconds=second)
